@@ -1,0 +1,388 @@
+/**
+ * Offline Navigation Matcher using Transformer Embeddings
+ * Uses @xenova/transformers with all-MiniLM-L6-v2 model for semantic similarity matching
+ * Provides fallback navigation when API is unavailable or network is offline
+ * 
+ * UPDATED: Now uses sentence-based examples instead of keyword lists for better semantic understanding
+ */
+
+import { pipeline } from "@xenova/transformers";
+import { EXAMPLE_ROUTES } from "./offlineMatcherExamples";
+
+// Route data with natural language examples for embedding
+export interface RouteData {
+  id: string;
+  title: string;
+  examples: string; // Natural language sentences representing user queries
+  subAction?: string;
+  action?: "navigate" | "weather" | "chat";
+}
+
+// Use the example-based routes from the separate file
+export const ROUTES: RouteData[] = EXAMPLE_ROUTES;
+
+// Global embedding model instance
+let embeddingModel: any = null;
+let routeEmbeddings: Float32Array[] = [];
+let isInitialized = false;
+      "diagnose crop disease plant problem issue sick unhealthy dying damaged affected infected leaf spots black spots brown spots white spots yellow leaves yellowing wilting drooping powdery mildew blight rust sick plant identify disease camera scan symptoms problem with my crop something wrong with plant plant has issue crop has problem leaves turning yellow leaves have spots leaves are dying plant is sick plant looks bad crop not healthy what is wrong with my plant why is my crop dying help my plant is sick check my crop examine my plant find disease detect problem my crop has some kind of issue my plant is not doing well crop looks unhealthy leaves have marks spots on leaves plant health check disease detection crop diagnosis plant disease identification leaf disease plant pathology crop pathology agricultural disease farming disease crop ailment plant ailment vegetation disease foliage disease agricultural pathology horticultural disease cultivated plant disease farmland disease agrarian disease plantation disease tillage disease husbandry disease rural disease farming ailment agricultural ailment crop sickness plant sickness vegetation sickness foliage problem leaf problem stem disease root disease fruit disease flower disease agricultural trouble farming trouble crop trouble plant trouble vegetation trouble agricultural difficulty farming difficulty crop difficulty വിള രോഗനിർണയം രോഗം കണ്ടെത്തുക ചെടിയുടെ രോഗം പ്രശ്നം ഇലപ്പുള്ളി കറുത്ത പുള്ളികൾ വെള്ള പുള്ളികൾ മഞ്ഞ ഇലകൾ ഉണങ്ങിപോകുന്നു വാടുന്നു രോഗിച്ച ചെടി എന്റെ വിളയ്ക്ക് പ്രശ്നം എന്തോ തെറ്റ് ചെടിയിൽ എന്തോ പ്രശ്നം ഇലകൾ മഞ്ഞയാകുന്നു എന്താണ് തെറ്റ് സഹായം വേണം ചെടി രോഗിച്ചു പരിശോധിക്കുക വിള പരിശോധന ചെടി പരിശോധന കാർഷിക രോഗം കൃഷി രോഗം വിള അസുഖം ചെടി അസുഖം സസ്യ രോഗം കൃഷി പ്രശ്നം വിള ആരോഗ്യം ചെടിയുടെ ആരോഗ്യം രോഗ കണ്ടെത്തൽ വിള ഡോക്ടർ ചെടി ഡോക്ടർ കാര്‍ഷിക പ്രശ്നം കൃഷി പ്രശ്നം എന്റെ വിളക്ക് എന്താണ് സംഭവിച്ചത് എന്റെ ചെടിക്ക് എന്താണ് പറ്റിയത് വിള നശിക്കുന്നു ചെടി നശിക്കുന്നു വിള ദുർബലമാണ് ചെടി ദുർബലമാണ്",
+    action: "navigate",
+    subAction: "diagnose",
+  },
+  {
+    id: "identify",
+    title: "Pest Scan",
+    keywords:
+      "pest insect bug worm caterpillar aphid beetle grasshopper locust larvae scan identify pest control camera photo insects eating my crop bugs on leaves worms on plant small insects crawling pest attack insect infestation insect damage bug damage worm damage pest damage crop eating insects leaf eating bugs plant eating pests destructive insects harmful insects damaging pests agricultural pests farming pests crop pests horticultural pests garden pests field pests plantation pests bugs destroying my crop insects ruining my plant pests damaging my crops unwanted insects unwanted bugs unwanted pests invasive insects invasive pests pest identification insect identification bug identification worm identification pest detection insect detection bug detection pest problem insect problem bug problem worm problem pest issue insect issue bug issue crop pest management insect pest control pest infestation control insect control measures bug control measures കീടം പ്രാണി പുഴു കീടനിയന്ത്രണം കീട സ്കാൻ പുഴുക്കൾ പ്രാണികൾ ഇലകൾ തിന്നുന്നു കീടാക്രമണം കീട ആക്രമണം പ്രാണി ആക്രമണം പുഴു ആക്രമണം കീട നിയന്ത്രണം പ്രാണി നിയന്ത്രണം കീട തിരിച്ചറിയൽ പ്രാണി തിരിച്ചറിയൽ വിള നശിപ്പിക്കുന്ന കീടങ്ങൾ ഇല തിന്നുന്ന കീടങ്ങൾ ചെടി നശിപ്പിക്കുന്ന പ്രാണികൾ ഹാനികരമായ കീടങ്ങൾ കാർഷിക കീടങ്ങൾ കൃഷി കീടങ്ങൾ വിള കീടങ്ങൾ അനാവശ്യ കീടങ്ങൾ അനാവശ്യ പ്രാണികൾ കീട പ്രശ്നം പ്രാണി പ്രശ്നം",
+    action: "navigate",
+    subAction: "scan",
+  },
+  {
+    id: "identify",
+    title: "Weed Identification",
+    keywords:
+      "weed unwanted plant grass wild plant identify remove control weeds growing unwanted growth invasive plants remove weeds weed problem grass problem unwanted vegetation invasive vegetation wild grass wild herbs undesirable plants undesirable vegetation nuisance plants nuisance vegetation troublesome plants troublesome weeds problematic weeds difficult weeds stubborn weeds persistent weeds recurring weeds weed identification weed detection weed recognition wild plant identification unwanted plant identification invasive plant identification weed control weed management weed removal weed elimination weed eradication agricultural weeds farming weeds crop weeds field weeds plantation weeds garden weeds horticultural weeds weeds in my field weeds in my crop weeds in my farm wild plants in my field കള അനാവശ്യ ചെടി കള തിരിച്ചറിയൽ നീക്കം കള വളരുന്നു അനാവശ്യ വളർച്ച കള പ്രശ്നം പുല്ല് പ്രശ്നം അനാവശ്യ സസ്യം കാട്ടു ചെടി കാട്ടു പുല്ല് അനാവശ്യ സസ്യങ്ങൾ കീട ചെടികൾ ശല്യം ചെയ്യുന്ന ചെടികൾ പ്രശ്‌നകരമായ കള കഠിനമായ കള ഉറപ്പുള്ള കള ആവർത്തിച്ചുള്ള കള കള തിരിച്ചറിയൽ കള കണ്ടെത്തൽ കാട്ടു ചെടി തിരിച്ചറിയൽ കള നിയന്ത്രണം കള മാനേജ്മെന്റ് കള നീക്കം കള എലിമിനേഷൻ കാർഷിക കള കൃഷി കള വിള കള എന്റെ വയലിലെ കള എന്റെ വിളയിലെ കള",
+    action: "navigate",
+    subAction: "weed",
+  },
+  {
+    id: "market",
+    title: "Market Prices",
+    keywords:
+      "market price mandi rate selling price commodity cost today price crop value vegetable price fruit price how much can I sell what is the price check prices current rates market rates today's price mandi bhav selling rates market value commodity value crop price crop rate vegetable rate fruit rate produce price produce rate agricultural price farming price agricultural market farming market commodity market vegetable market fruit market produce market crop market agricultural commodity price farming commodity price price checking price inquiry rate inquiry market inquiry price information rate information market information current price current rate today rate today cost selling cost marketing price marketing rate trade price trade rate commercial price commercial rate wholesale price wholesale rate retail price retail rate market trend price trend rate trend market analysis price analysis agricultural economics farming economics crop economics commodity economics agricultural trade farming trade crop trade price discovery rate discovery market discovery price quotation rate quotation market quotation വിപണി വില മണ്ഡി നിരക്ക് ഇന്നത്തെ വില വിൽപന വില പച്ചക്കറി വില എത്ര വിൽക്കാം എത്ര വില കിട്ടും ഇന്നത്തെ നിരക്ക് മാർക്കറ്റ് വില ചരക്ക് വില വിള വില വിള നിരക്ക് പച്ചക്കറി നിരക്ക് ഫല വില ഉൽപന്ന വില കാർഷിക വില കൃഷി വില കാർഷിക മാർക്കറ്റ് കൃഷി മാർക്കറ്റ് ചരക്ക് മാർക്കറ്റ് വില പരിശോധന നിരക്ക് അന്വേഷണം മാർക്കറ്റ് വിവരം നിലവിലെ വില ഇന്നത്തെ നിരക്ക് വിൽപന ചെലവ് വ്യാപാര വില വാണിജ്യ വില മൊത്ത വില ചില്ലറ വില മാർക്കറ്റ് പ്രവണത വില പ്രവണത കാർഷിക സാമ്പത്തികം കൃഷി സാമ്പത്തികം വില കണ്ടെത്തൽ മാർക്കറ്റ് ഉദ്ധരണി എത്ര രൂപ കിട്ടും എത്ര വിലയ്ക്ക് വിൽക്കാം ഇന്നത്തെ മാർക്കറ്റ് നിരക്ക് മണ്ഡി ഭാവ് എന്റെ വിള എത്രയ്ക്ക് വിൽക്കാം",
+    action: "navigate",
+  },
+  {
+    id: "planner",
+    title: "Crop Planner",
+    keywords:
+      "crop planner calendar schedule task todo farming plan sowing harvesting season timing when to plant when to sow when to harvest crop calendar farming schedule agricultural calendar seasonal planning planting schedule harvest planning cultivation schedule farming timeline agricultural timeline crop rotation schedule seasonal crop plan annual farming plan yearly farming schedule monthly farming plan farming activities schedule planting time sowing time harvesting time growing season planting season harvest season crop cycle farming cycle agricultural cycle cultivation cycle field preparation schedule land preparation schedule farming tasks agricultural tasks crop tasks field tasks plantation tasks cultivation tasks farm planning crop scheduling field scheduling plantation scheduling agricultural scheduling farming agenda crop agenda field agenda task management farm management agricultural management schedule my crops plan my farming organize farming activities farming organization crop organization field organization agricultural organization when should I plant when is the best time to plant when do I harvest when to start farming crop timing planting timing harvesting timing seasonal timing agricultural timing farming calendar agricultural planning cultivation planning crop cultivation planning field planning plantation planning farm calendar field calendar plantation calendar agricultural planner farming planner crop planner tool schedule tool calendar tool വിള ആസൂത്രണം കലണ്ടർ ഷെഡ്യൂൾ ടാസ്ക് കൃഷി പദ്ധതി വിതയ്ക്കൽ വിളവെടുപ്പ് എപ്പോൾ നടണം എപ്പോൾ വിതയ്ക്കണം എപ്പോൾ വിളവെടുക്കണം വിള കലണ്ടർ കൃഷി ഷെഡ്യൂൾ കാർഷിക കലണ്ടർ കാല ആസൂത്രണം നടീൽ ഷെഡ്യൂൾ വിളവെടുപ്പ് ആസൂത്രണം കൃഷി ടൈംലൈൻ കാർഷിക ടൈംലൈൻ വിള ഭ്രമണം ഷെഡ്യൂൾ കാല വിള പദ്ധതി വാർഷിക കൃഷി പദ്ധതി മാസിക കൃഷി പദ്ധതി കൃഷി പ്രവർത്തനങ്ങൾ ഷെഡ്യൂൾ നടീൽ സമയം വിതയ്ക്കൽ സമയം വിളവെടുപ്പ് സമയം വളരുന്ന സീസൺ നടീൽ സീസൺ വിളവെടുപ്പ് സീസൺ വിള ചക്രം കൃഷി ചക്രം കാർഷിക ചക്രം കൃഷി ജോലികൾ കാർഷിക ജോലികൾ വിള ജോലികൾ എന്റെ വിള ഷെഡ്യൂൾ ചെയ്യുക എന്റെ കൃഷി ആസൂത്രണം ചെയ്യുക കൃഷി പ്രവർത്തനങ്ങൾ ഓർഗനൈസ് ചെയ്യുക എപ്പോൾ നടണം നല്ലത് ഏറ്റവും നല്ല സമയം എപ്പോൾ കൃഷി ആരംഭിക്കണം വിള ടൈമിംഗ് നടീൽ ടൈമിംഗ് വിളവെടുപ്പ് ടൈമിംഗ് കാല ടൈമിംഗ് കാർഷിക ടൈമിംഗ് കൃഷി കലണ്ടർ കാർഷിക ആസൂത്രണം കൃഷി ആസൂത്രണം വയൽ ആസൂത്രണം കൃഷി പ്ലാനർ ഉപകരണം",
+    action: "navigate",
+  },
+  {
+    id: "twin",
+    title: "Crop Guide",
+    keywords:
+      "crop guide digital twin farming advice recommendations best practices cultivation guide expert tips how to grow farming tips agricultural advice expert guidance smart farming precision agriculture crop intelligence ai farming machine learning crops data driven farming intelligent agriculture cognitive farming automated farming farming automation agricultural technology agritech farming technology crop technology smart crop management intelligent crop management digital agriculture virtual farm digital farming cyber farming smart agri farming insights crop insights agricultural insights farming wisdom agricultural wisdom crop wisdom farming knowledge base agricultural knowledge farming best practices crop best practices expert farming expert agriculture professional farming professional agriculture advanced farming advanced agriculture modern farming modern agriculture contemporary farming innovative farming innovative agriculture cutting edge farming progressive farming scientific farming evidence based farming research based farming data analytics farming predictive farming crop analytics farming intelligence agricultural intelligence crop ai digital crop advisor virtual crop consultant ai crop guide machine learning agriculture deep learning farming neural network agriculture computer vision farming satellite farming remote sensing agriculture iot farming internet of things agriculture sensor based farming weather based farming climate smart agriculture sustainable farming eco farming organic farming integrated farming holistic farming regenerative farming precision crop management variable rate farming site specific farming farm optimization crop optimization yield optimization resource optimization input optimization farming efficiency agricultural efficiency crop efficiency production optimization harvest optimization cultivation optimization growing optimization planting optimization sowing optimization irrigation optimization fertilization optimization nutrient optimization pest optimization disease optimization weed optimization soil optimization land optimization field optimization farm productivity agricultural productivity crop productivity yield maximization production maximization output maximization farming performance agricultural performance crop performance quality optimization grade optimization market optimization profit optimization revenue optimization cost optimization expense optimization budget optimization roi optimization return optimization investment optimization farming profitability agricultural profitability crop profitability farming success agricultural success crop success farming excellence agricultural excellence crop excellence farming mastery agricultural mastery crop mastery expert advice professional advice specialist advice consultant advice advisor advice agronomist advice horticulturist advice botanist advice plant scientist advice crop scientist advice agricultural scientist advice farming specialist crop specialist agricultural specialist farming consultant crop consultant agricultural consultant farming advisor crop advisor agricultural advisor farming expert crop expert agricultural expert കൃഷി ഗൈഡ് വിള ഗൈഡ് ഡിജിറ്റൽ ട്വിൻ കൃഷി ഉപദേശം ശുപാർശകൾ എങ്ങനെ വളർത്താം കൃഷി ടിപ്സ് മികച്ച രീതികൾ കൃഷി സാങ്കേതികവിദ്യ സ്മാർട്ട് കൃഷി കൃത്യമായ കൃഷി വിള ബുദ്ധി എഐ കൃഷി കാർഷിക ഉപദേശം വിദഗ്ദ്ധ മാർഗനിർദേശം കൃഷി വിജ്ഞാനം കാർഷിക വിജ്ഞാനം വിള വിജ്ഞാനം കൃഷി വിദഗ്ദ്ധൻ കാർഷിക വിദഗ്ദ്ധൻ വിള വിദഗ്ദ്ധൻ കൃഷി ഉപദേഷ്ടാവ് കാർഷിക ഉപദേഷ്ടാവ് വിള ഉപദേഷ്ടാവ് കൃഷി കൺസൾട്ടന്റ് ആധുനിക കൃഷി നൂതന കൃഷി ശാസ്ത്രീയ കൃഷി സുസ്ഥിര കൃഷി പരിസ്ഥിതി കൃഷി ജൈവ കൃഷി സംയോജിത കൃഷി കൃഷി കാര്യക്ഷമത കാർഷിക കാര്യക്ഷമത വിള കാര്യക്ഷമത ഉത്പാദനം ഒപ്റ്റിമൈസേഷൻ വിളവ് ഒപ്റ്റിമൈസേഷൻ കൃഷി വിജയം കാർഷിക വിജയം വിള വിജയം കൃഷി മികവ് കാർഷിക മികവ് വിള മികവ്",
+    action: "navigate",
+  },
+  {
+    id: "twin",
+    title: "Crop Recommendations",
+    keywords:
+      "recommendations suggest crops what to plant best crop suitable crop season crop suggestion which crop to grow what should I plant best crop for my soil recommend crops suggest suitable crops crop selection crop choice crop picking crop decision what crop what to grow what to cultivate what to farm crop ideas crop options crop alternatives crop varieties suitable varieties recommended varieties best varieties top crops profitable crops high yield crops best yielding crops money making crops cash crops commercial crops market crops demand crops trending crops popular crops successful crops proven crops tested crops reliable crops dependable crops ideal crops perfect crops optimal crops appropriate crops fitting crops matching crops compatible crops right crops correct crops proper crops advisable crops sensible crops smart crops wise crops intelligent crops strategic crops practical crops viable crops feasible crops workable crops achievable crops attainable crops realistic crops seasonal crops monsoon crops summer crops winter crops spring crops autumn crops kharif crops rabi crops zaid crops rainy season crops dry season crops wet season crops climate suitable crops weather suitable crops region suitable crops area suitable crops zone suitable crops location suitable crops geography suitable crops topography suitable crops soil suitable crops land suitable crops field suitable crops terrain suitable crops condition suitable crops situation suitable crops circumstance suitable crops environment suitable crops ecosystem suitable crops habitat suitable crops niche crops specialty crops unique crops specific crops particular crops certain crops select crops chosen crops preferred crops favored crops recommended choices suggested options proposed crops advised crops counseled crops guided crops directed crops instructed crops informed crops indicated crops specified crops designated crops nominated crops selected crops picked crops chosen crops elected crops opted crops decided crops determined crops resolved crops settled crops fixed crops established crops set crops appointed crops assigned crops allocated crops allotted crops given crops provided crops offered crops presented crops submitted crops proposed crops suggested crops recommended crops endorsed crops approved crops certified crops validated crops verified crops confirmed crops authenticated crops authorized crops sanctioned crops permitted crops allowed crops cleared crops passed crops accepted crops adopted crops embraced crops welcomed crops received crops acknowledged crops recognized crops identified crops noted crops observed crops seen crops noticed crops detected crops discovered crops found crops located crops situated crops positioned crops placed crops വിള ശുപാർശകൾ എന്ത് നടണം നല്ല വിള അനുയോജ്യമായ വിള ഏത് വിള നടണം എന്ത് നടണം നല്ലത് വിള തിരഞ്ഞെടുപ്പ് വിള ചോയ്സ് വിള തീരുമാനം ഏത് വിളയാണ് നല്ലത് ഏത് വിള വളർത്താം ഏത് വിള കൃഷി ചെയ്യാം വിള ഐഡിയകൾ വിള ഓപ്ഷനുകൾ വിള ബദലുകൾ വിള ഇനങ്ങൾ അനുയോജ്യമായ ഇനങ്ങൾ ശുപാർശ ചെയ്യുന്ന ഇനങ്ങൾ മികച്ച ഇനങ്ങൾ ലാഭകരമായ വിളകൾ ഉയർന്ന വിളവ് വിളകൾ പണം സമ്പാദിക്കുന്ന വിളകൾ പണ വിളകൾ വാണിജ്യ വിളകൾ മാർക്കറ്റ് വിളകൾ ഡിമാൻഡ് വിളകൾ ട്രെൻഡിംഗ് വിളകൾ ജനപ്രിയ വിളകൾ വിജയകരമായ വിളകൾ തെളിയിക്കപ്പെട്ട വിളകൾ പരീക്ഷിച്ച വിളകൾ വിശ്വസനീയ വിളകൾ അനുയോജ്യമായ വിളകൾ തികഞ്ഞ വിളകൾ ഒപ്റ്റിമൽ വിളകൾ ശരിയായ വിളകൾ ഉചിതമായ വിളകൾ യോജിച്ച വിളകൾ കാല വിളകൾ മൺസൂൺ വിളകൾ വേനൽ വിളകൾ ശീതകാല വിളകൾ മഴക്കാല വിളകൾ ഖരീഫ് വിളകൾ റാബി വിളകൾ സായിദ് വിളകൾ കാലാവസ്ഥ അനുയോജ്യം പ്രദേശം അനുയോജ്യം മണ്ണ് അനുയോജ്യം ഭൂമി അനുയോജ്യം വയൽ അനുയോജ്യം സാഹചര്യം അനുയോജ്യം പരിസ്ഥിതി അനുയോജ്യം എന്റെ മണ്ണിന് ഏത് വിള എന്റെ ഭൂമിക്ക് ഏത് വിള എന്റെ വയലിന് ഏത് വിള ഈ സീസണിൽ എന്ത് നടാം ഇപ്പോൾ എന്ത് വിള നടാം ഏത് വിളയാണ് ലാഭകരം ഏറ്റവും നല്ല വിള ഏതാണ് മികച്ച വിള തിരഞ്ഞെടുക്കുക വിള നിർദേശങ്ങൾ വിള ഉപദേശം",
+    action: "navigate",
+    subAction: "recommendations",
+  },
+  {
+    id: "soil-analyzer",
+    title: "Soil Analyzer",
+    keywords:
+      "soil test analysis ph nutrient nitrogen phosphorus potassium fertility health quality check soil test my soil soil testing soil health soil nutrients soil quality soil analyzer soil analysis soil testing kit soil sample soil examination soil inspection soil investigation soil study soil evaluation soil assessment soil survey soil audit soil check soil verification soil validation soil measurement soil monitoring soil diagnosis soil condition soil status soil state soil composition soil structure soil texture soil type soil classification soil properties soil characteristics soil features soil attributes soil parameters soil indicators soil markers soil factors soil elements soil components soil constituents soil makeup soil profile soil horizon soil layer soil strata soil depth soil density soil compaction soil porosity soil permeability soil drainage soil moisture soil water soil retention soil capacity soil fertility soil productivity soil richness soil nutrition soil nourishment soil feeding soil amendment soil improvement soil enhancement soil enrichment soil fortification soil supplementation soil addition soil modification soil correction soil remediation soil restoration soil reclamation soil rehabilitation soil rejuvenation soil revitalization nitrogen n nitrate ammonia ammonium urea phosphorus p phosphate potassium k potash calcium ca magnesium mg sulfur s sulphur iron fe manganese mn zinc zn copper cu boron b molybdenum mo chlorine cl cobalt co nickel ni sodium na organic matter humus carbon organic carbon total carbon soil carbon organic content humus content carbon content cation exchange capacity cec base saturation electrical conductivity ec salinity alkalinity acidity ph level ph value ph scale ph test acid soil alkaline soil neutral soil acidic alkaline basic lime requirement gypsum requirement nutrient availability nutrient uptake nutrient absorption nutrient deficiency nutrient excess nutrient balance nutrient ratio nutrient status nutrient level nutrient concentration nutrient content macro nutrients micro nutrients primary nutrients secondary nutrients trace elements minor elements essential nutrients plant nutrients crop nutrients fertilizer requirement fertilizer recommendation fertilizer need fertilizer demand fertilizer application fertilizer dose fertilizer rate fertilizer timing fertilizer schedule fertilizer program fertilizer plan soil fertility status fertility level fertility index fertility rating fertility grade fertility class fertility category productivity index productivity rating productivity class yield potential yield capacity yield capability production potential production capacity production capability growing potential growing capacity growing capability cultivation potential cultivation capacity cultivation capability farming potential farming capacity farming capability land capability land suitability land classification land evaluation land assessment land rating land grade land quality land productivity land fertility land health land condition land status check my soil test my soil analyze my soil examine my soil inspect my soil evaluate my soil assess my soil measure my soil monitor my soil diagnose my soil what is my soil type what is my soil condition what nutrients does my soil need what is my soil ph is my soil fertile is my soil healthy is my soil good soil report soil result soil data soil information soil details soil findings soil outcome soil conclusion soil summary soil overview soil brief soil profile report soil test report soil analysis report soil laboratory soil lab soil testing service soil testing center soil testing facility soil testing agency soil testing company മണ്ണ് പരിശോധന വിശകലനം പോഷക മൂലകം നൈട്രജൻ ഫോസ്ഫറസ് പൊട്ടാഷ് മണ്ണ് പരിശോധിക്കുക മണ്ണിന്റെ ആരോഗ്യം മണ്ണ് ടെസ്റ്റ് മണ്ണ് അനാലിസിസ് മണ്ണ് വിശകലനം എന്റെ മണ്ണ് മണ്ണ് പരിശോധന മണ്ണിന്റെ ആരോഗ്യം മണ്ണിലെ പോഷകങ്ങൾ മണ്ണിന്റെ ഗുണനിലവാരം മണ്ണ് അനലൈസർ മണ്ണ് സാമ്പിൾ മണ്ണ് പരിശോധന മണ്ണ് പഠനം മണ്ണ് വിലയിരുത്തൽ മണ്ണ് സർവേ മണ്ണ് ഓഡിറ്റ് മണ്ണ് പരിശോധന മണ്ണ് അവസ്ഥ മണ്ണ് നില മണ്ണ് ഘടന മണ്ണിന്റെ ഘടന മണ്ണിന്റെ രൂപം മണ്ണ് തരം മണ്ണ് വർഗ്ഗീകരണം മണ്ണ് ഗുണങ്ങൾ മണ്ണ് സവിശേഷതകൾ മണ്ണ് സ്വഭാവം മണ്ണ് സ്വഭാവസവിശേഷതകൾ മണ്ണ് പാരാമീറ്ററുകൾ മണ്ണ് സൂചകങ്ങൾ മണ്ണ് മാർക്കറുകൾ മണ്ണ് ഘടകങ്ങൾ മണ്ണ് മൂലകങ്ങൾ മണ്ണ് ഘടകങ്ങൾ മണ്ണ് ഉൾക്കൊള്ളുന്നത് മണ്ണ് പ്രൊഫൈൽ മണ്ണ് പാളി മണ്ണ് ആഴം മണ്ണ് സാന്ദ്രത മണ്ണ് കോംപാക്ഷൻ മണ്ണ് സുഷിരം മണ്ണ് പ്രവേശനക്ഷമത മണ്ണ് ഡ്രെയിനേജ് മണ്ണ് ഈർപ്പം മണ്ണ് ജലം മണ്ണ് നിലനിർത്തൽ മണ്ണ് ശേഷി മണ്ണ് ഫലഭൂയിഷ്ഠത മണ്ണ് ഉത്പാദനക്ഷമത മണ്ണ് സമ്പന്നത മണ്ണ് പോഷണം മണ്ണ് പോഷണം മണ്ണ് ഭക്ഷണം മണ്ണ് ഭേദഗതി മണ്ണ് മെച്ചപ്പെടുത്തൽ മണ്ണ് മെച്ചപ്പെടുത്തൽ മണ്ണ് സമ്പുഷ്ടമാക്കൽ നൈട്രജൻ എൻ നൈട്രേറ്റ് അമോണിയ അമോണിയം യൂറിയ ഫോസ്ഫറസ് പി ഫോസ്ഫേറ്റ് പൊട്ടാഷ് കെ പൊട്ടാഷ് കാൽസ്യം സിഎ മഗ്നീഷ്യം എംജി സൾഫർ എസ് സൾഫർ ഇരുമ്പ് എഫ്ഇ മാംഗനീസ് എംഎൻ സിങ്ക് ഇസഡ്എൻ ചെമ്പ് സിയു ബോറോൺ ബി മോളിബ്ഡിനം മോ ക്ലോറിൻ സിഎൽ കൊബാൾട്ട് സി ഓ നിക്കൽ നി സോഡിയം നാ ജൈവ പദാർത്ഥം ഹ്യൂമസ് കാർബൺ ജൈവ കാർബൺ മൊത്തം കാർബൺ മണ്ണ് കാർബൺ ജൈവ ഉള്ളടക്കം ഹ്യൂമസ് ഉള്ളടക്കം കാർബൺ ഉള്ളടക്കം കാറ്റേഷൻ എക്സ്ചേഞ്ച് കപ്പാസിറ്റി സിഇസി ബേസ് സാച്ചുറേഷൻ ഇലക്ട്രിക്കൽ കണ്ടക്റ്റിവിറ്റി ഇസി ലവണത ക്ഷാരത അമ്ലത പിഎച്ച് ലെവൽ പിഎച്ച് മൂല്യം പിഎച്ച് സ്കെയിൽ പിഎച്ച് ടെസ്റ്റ് ആസിഡ് മണ്ണ് ആൽക്കലൈൻ മണ്ണ് ന്യൂട്രൽ മണ്ണ് അമ്ല ക്ഷാര അടിസ്ഥാന ചുണ്ണാമ്പ് ആവശ്യം ജിപ്സം ആവശ്യം പോഷക ലഭ്യത പോഷക ആഗിരണം പോഷക കുറവ് പോഷക അധികം പോഷക ബാലൻസ് പോഷക അനുപാതം പോഷക നില പോഷക ലെവൽ പോഷക സാന്ദ്രത പോഷക ഉള്ളടക്കം മാക്രോ പോഷകങ്ങൾ മൈക്രോ പോഷകങ്ങൾ പ്രാഥമിക പോഷകങ്ങൾ ദ്വിതീയ പോഷകങ്ങൾ ട്രേസ് മൂലകങ്ങൾ മൈനർ മൂലകങ്ങൾ അത്യാവശ്യ പോഷകങ്ങൾ ചെടി പോഷകങ്ങൾ വിള പോഷകങ്ങൾ വളം ആവശ്യം വളം ശുപാർശ വളം ആവശ്യം വളം ആവശ്യം വളം പ്രയോഗം വളം ഡോസ് വളം നിരക്ക് വളം സമയം വളം ഷെഡ്യൂൾ വളം പ്രോഗ്രാം വളം പ്ലാൻ മണ്ണ് ഫലഭൂയിഷ്ഠത നില ഫലഭൂയിഷ്ഠത ലെവൽ ഫലഭൂയിഷ്ഠത സൂചിക ഫലഭൂയിഷ്ഠത റേറ്റിംഗ് ഫലഭൂയിഷ്ഠത ഗ്രേഡ് ഉത്പാദനക്ഷമത സൂചിക ഉത്പാദനക്ഷമത റേറ്റിംഗ് വിളവ് സാധ്യത വിളവ് ശേഷി ഉത്പാദന സാധ്യത ഉത്പാദന ശേഷി വളർച്ച സാധ്യത കൃഷി സാധ്യത കൃഷി ശേഷി ഭൂമി ശേഷി ഭൂമി അനുയോജ്യത ഭൂമി വർഗ്ഗീകരണം ഭൂമി വിലയിരുത്തൽ ഭൂമി റേറ്റിംഗ് ഭൂമി ഗ്രേഡ് ഭൂമി ഗുണനിലവാരം ഭൂമി ഉത്പാദനക്ഷമത ഭൂമി ഫലഭൂയിഷ്ഠത ഭൂമി ആരോഗ്യം ഭൂമി അവസ്ഥ എന്റെ മണ്ണ് പരിശോധിക്കുക എന്റെ മണ്ണ് ടെസ്റ്റ് ചെയ്യുക എന്റെ മണ്ണ് അനാലൈസ് ചെയ്യുക എന്റെ മണ്ണ് പരിശോധിക്കുക എന്റെ മണ്ണ് പരിശോധിക്കുക എന്റെ മണ്ണ് വിലയിരുത്തുക എന്റെ മണ്ണ് അളക്കുക എന്റെ മണ്ണിന്റെ തരം എന്താണ് എന്റെ മണ്ണിന്റെ അവസ്ഥ എന്താണ് എന്റെ മണ്ണിന് എന്ത് പോഷകങ്ങൾ വേണം എന്റെ മണ്ണിന്റെ പിഎച്ച് എന്താണ് എന്റെ മണ്ണ് ഫലഭൂയിഷ്ഠമാണോ എന്റെ മണ്ണ് ആരോഗ്യകരമാണോ എന്റെ മണ്ണ് നല്ലതാണോ മണ്ണ് റിപ്പോർട്ട് മണ്ണ് ഫലം മണ്ണ് ഡാറ്റ മണ്ണ് വിവരങ്ങൾ മണ്ണ് വിശദാംശങ്ങൾ മണ്ണ് കണ്ടെത്തലുകൾ മണ്ണ് ഫലം മണ്ണ് നിഗമനം മണ്ണ് സംഗ്രഹം മണ്ണ് ഓവർവ്യൂ മണ്ണ് സംക്ഷിപ്തം മണ്ണ് പ്രൊഫൈൽ റിപ്പോർട്ട് മണ്ണ് ടെസ്റ്റ് റിപ്പോർട്ട് മണ്ണ് വിശകലന റിപ്പോർട്ട് മണ്ണ് ലബോറട്ടറി മണ്ണ് ലാബ് മണ്ണ് പരിശോധന സേവനം മണ്ണ് പരിശോധന കേന്ദ്രം മണ്ണ് പരിശോധന സൗകര്യം മണ്ണ് പരിശോധന ഏജൻസി മണ്ണ് പരിശോധന കമ്പനി",
+    action: "navigate",
+  },
+  {
+    id: "forum",
+    title: "Farmer Forum",
+    keywords:
+      "forum community discussion farmer talk question answer post social network ask farmers community help farmer discussion farmer community talk to farmers ask question farmer forum community forum discussion board message board talk to other farmers connect with farmers farmer network farming community agricultural community farmer social network ask fellow farmers community support peer support farmer to farmer farmer advice community advice farmer experience shared experience community knowledge collective wisdom farmer stories success stories farming tips from farmers learn from farmers farmer feedback community feedback farmer opinions community opinions farmer suggestions community suggestions ask the community community question farmer question community answer farmer answer post question post message share experience share knowledge share tips share advice community help farmer help need advice need help ask for help seek advice seek help request help community assistance farmer assistance peer assistance collaborative learning community learning social farming collaborative farming cooperative farming farmer cooperation community cooperation farmer collaboration community collaboration farmer engagement community engagement active community vibrant community helpful community supportive community friendly community welcoming community farmer friends farming friends agricultural friends rural community village community farming network agricultural network farmer connections community connections networking farmers connect farmers meet farmers interact farmers communicate farmers discussion forum chat forum talk forum conversation forum dialogue forum exchange forum interaction forum farmer chat community chat group chat farmer group community group farming group agricultural group discussion group talk group conversation group farmer interaction community interaction peer interaction social interaction farmer communication community communication group communication collective communication farmer dialogue community dialogue group dialogue open discussion public discussion community discussion farmer meeting virtual meeting online meeting digital meeting farmer gathering community gathering social gathering farmer event community event networking event connection event farmer platform community platform social platform discussion platform communication platform collaboration platform interaction platform engagement platform farmer space community space social space discussion space shared space common space public space open space farmer hub community hub social hub discussion hub communication hub collaboration hub interaction hub knowledge hub learning hub support hub help hub advice hub guidance hub consultation hub farmer exchange knowledge exchange experience exchange information exchange idea exchange thought exchange opinion exchange view exchange perspective exchange insight exchange tip exchange trick exchange technique exchange method exchange practice exchange strategy exchange approach exchange solution exchange answer exchange response exchange reply exchange feedback exchange comment exchange suggestion exchange recommendation exchange proposal exchange input exchange contribution exchange participation exchange involvement കർഷക ഫോറം സമൂഹം ചർച്ച സംസാരം ചോദ്യം ഉത്തരം കർഷകരോട് ചോദിക്കുക സമൂഹം സഹായം കർഷക സമൂഹം കർഷക ചർച്ച കർഷകരുമായി സംസാരിക്കുക മറ്റ് കർഷകരുമായി ബന്ധപ്പെടുക കർഷക നെറ്റ്‌വർക്ക് കാർഷിക സമൂഹം സോഷ്യൽ നെറ്റ്‌വർക്ക് സഹ കർഷകരോട് ചോദിക്കുക സമൂഹ പിന്തുണ പിയർ സപ്പോർട്ട് കർഷകൻ മുതൽ കർഷകൻ വരെ കർഷക ഉപദേശം സമൂഹ ഉപദേശം കർഷക അനുഭവം പങ്കിട്ട അനുഭവം സമൂഹ അറിവ് കൂട്ടായ ജ്ഞാനം കർഷക കഥകൾ വിജയ കഥകൾ കർഷകരിൽ നിന്ന് പഠിക്കുക കർഷക ഫീഡ്ബാക്ക് സമൂഹ ഫീഡ്ബാക്ക് കർഷക അഭിപ്രായങ്ങൾ സമൂഹ അഭിപ്രായങ്ങൾ കർഷക നിർദേശങ്ങൾ സമൂഹ നിർദേശങ്ങൾ സമൂഹത്തോട് ചോദിക്കുക സമൂഹ ചോദ്യം കർഷക ചോദ്യം സമൂഹ ഉത്തരം കർഷക ഉത്തരം ചോദ്യം പോസ്റ്റ് ചെയ്യുക സന്ദേശം പോസ്റ്റ് ചെയ്യുക അനുഭവം പങ്കിടുക അറിവ് പങ്കിടുക നുറുങ്ങുകൾ പങ്കിടുക ഉപദേശം പങ്കിടുക സമൂഹ സഹായം കർഷക സഹായം ഉപദേശം വേണം സഹായം വേണം സഹായത്തിനായി ചോദിക്കുക ഉപദേശം തേടുക സഹായം തേടുക സമൂഹ സഹായം അഭ്യർത്ഥിക്കുക കർഷക സഹായം പിയർ അസിസ്റ്റൻസ് സഹകരണ പഠനം സമൂഹ പഠനം സാമൂഹിക കൃഷി സഹകരണ കൃഷി സഹകരണ കൃഷി കർഷക സഹകരണം സമൂഹ സഹകരണം കർഷക സഹകരണം സമൂഹ സഹകരണം കർഷക ഇടപെടൽ സമൂഹ ഇടപെടൽ സജീവ സമൂഹം ഊർജസ്വലമായ സമൂഹം സഹായകരമായ സമൂഹം പിന്തുണയ്ക്കുന്ന സമൂഹം സൗഹൃദപരമായ സമൂഹം സ്വാഗതം ചെയ്യുന്ന സമൂഹം കർഷക സുഹൃത്തുക്കൾ കൃഷി സുഹൃത്തുക്കൾ കാർഷിക സുഹൃത്തുക്കൾ ഗ്രാമീണ സമൂഹം ഗ്രാമ സമൂഹം കൃഷി നെറ്റ്‌വർക്ക് കാർഷിക നെറ്റ്‌വർക്ക് കർഷക കണക്ഷനുകൾ സമൂഹ കണക്ഷനുകൾ നെറ്റ്‌വർക്കിംഗ് കർഷകരെ ബന്ധിപ്പിക്കുക കർഷകരെ കണ്ടുമുട്ടുക കർഷകരുമായി ഇടപഴകുക കർഷകരുമായി ആശയവിനിമയം നടത്തുക ചർച്ചാ ഫോറം ചാറ്റ് ഫോറം സംഭാഷണ ഫോറം സംഭാഷണ ഫോറം ഡയലോഗ് ഫോറം എക്സ്ചേഞ്ച് ഫോറം ഇന്ററാക്ഷൻ ഫോറം കർഷക ചാറ്റ് സമൂഹ ചാറ്റ് ഗ്രൂപ്പ് ചാറ്റ് കർഷക ഗ്രൂപ്പ് സമൂഹ ഗ്രൂപ്പ് കൃഷി ഗ്രൂപ്പ് കാർഷിക ഗ്രൂപ്പ് ചർച്ചാ ഗ്രൂപ്പ് സംഭാഷണ ഗ്രൂപ്പ് കർഷക ഇടപെടൽ സമൂഹ ഇടപെടൽ പിയർ ഇന്ററാക്ഷൻ സാമൂഹിക ഇടപെടൽ കർഷക ആശയവിനിമയം സമൂഹ ആശയവിനിമയം ഗ്രൂപ്പ് ആശയവിനിമയം കൂട്ടായ ആശയവിനിമയം കർഷക സംഭാഷണം സമൂഹ സംഭാഷണം ഗ്രൂപ്പ് സംഭാഷണം തുറന്ന ചർച്ച പൊതു ചർച്ച സമൂഹ ചർച്ച കർഷക യോഗം വെർച്വൽ മീറ്റിംഗ് ഓൺലൈൻ മീറ്റിംഗ് ഡിജിറ്റൽ മീറ്റിംഗ് കർഷക ഒത്തുചേരൽ സമൂഹ ഒത്തുചേരൽ സാമൂഹിക ഒത്തുചേരൽ കർഷക ഇവന്റ് സമൂഹ പരിപാടി നെറ്റ്‌വർക്കിംഗ് ഇവന്റ് കണക്ഷൻ ഇവന്റ് കർഷക പ്ലാറ്റ്ഫോം സമൂഹ പ്ലാറ്റ്ഫോം സോഷ്യൽ പ്ലാറ്റ്ഫോം ചർച്ചാ പ്ലാറ്റ്ഫോം ആശയവിനിമയ പ്ലാറ്റ്ഫോം സഹകരണ പ്ലാറ്റ്ഫോം ഇന്ററാക്ഷൻ പ്ലാറ്റ്ഫോം ഇടപെടൽ പ്ലാറ്റ്ഫോം കർഷക സ്പേസ് സമൂഹ ഇടം സാമൂഹിക ഇടം ചർച്ച സ്ഥലം പങ്കിട്ട ഇടം പൊതു സ്ഥലം തുറന്ന സ്ഥലം കർഷക കേന്ദ്രം സമൂഹ കേന്ദ്രം സോഷ്യൽ ഹബ് ചർച്ചാ കേന്ദ്രം ആശയവിനിമയ കേന്ദ്രം സഹകരണ കേന്ദ്രം ഇന്ററാക്ഷൻ ഹബ് അറിവ് കേന്ദ്രം പഠന കേന്ദ്രം പിന്തുണ കേന്ദ്രം സഹായ കേന്ദ്രം ഉപദേശ കേന്ദ്രം മാർഗനിർദേശ കേന്ദ്രം കൺസൾട്ടേഷൻ ഹബ് കർഷക എക്സ്ചേഞ്ച് അറിവ് കൈമാറ്റം അനുഭവ കൈമാറ്റം വിവര കൈമാറ്റം ആശയ കൈമാറ്റം ചിന്താ കൈമാറ്റം അഭിപ്രായ കൈമാറ്റം കാഴ്ച കൈമാറ്റം കാഴ്ചപ്പാട് കൈമാറ്റം ഉൾക്കാഴ്ച കൈമാറ്റം ടിപ്പ് എക്സ്ചേഞ്ച് ട്രിക്ക് എക്സ്ചേഞ്ച് ടെക്നിക് എക്സ്ചേഞ്ച് രീതി കൈമാറ്റം പ്രാക്ടീസ് എക്സ്ചേഞ്ച് തന്ത്ര കൈമാറ്റം സമീപന കൈമാറ്റം പരിഹാര കൈമാറ്റം ഉത്തര കൈമാറ്റം പ്രതികരണ കൈമാറ്റം മറുപടി കൈമാറ്റം ഫീഡ്ബാക്ക് എക്സ്ചേഞ്ച് കമന്റ് എക്സ്ചേഞ്ച് നിർദേശ കൈമാറ്റം ശുപാർശ കൈമാറ്റം നിർദേശ കൈമാറ്റം ഇൻപുട്ട് എക്സ്ചേഞ്ച് സംഭാവന കൈമാറ്റം പങ്കാളിത്ത കൈമാറ്റം ഇടപെടൽ കൈമാറ്റം",
+    action: "navigate",
+  },
+  {
+    id: "knowledge",
+    title: "Knowledge Center",
+    keywords:
+      "knowledge learn education guide tutorial how to help article tips tricks training learning resources educational content farming knowledge agricultural information knowledge base knowledge center learning center education center training center resource center information center help center support center documentation docs manual handbook guidebook reference study material learning material educational material training material instructional material teaching material course material lesson material module content learning content educational content instructional content training content teaching content knowledge content information content reference content study guide learning guide education guide training guide instruction guide teaching guide how to guide step by step guide beginner guide advanced guide expert guide complete guide comprehensive guide detailed guide practical guide hands on guide visual guide video guide audio guide text guide written guide illustrated guide diagram guide infographic guide tutorial lesson course training workshop seminar webinar class session module unit chapter topic subject matter content material resource learning path education path training path knowledge path study path curriculum syllabus program scheme plan roadmap journey pathway route track trail learn how to find out discover explore understand comprehend grasp master acquire gain obtain get receive absorb assimilate digest internalize memorize remember retain recall retrieve apply practice use utilize implement execute perform demonstrate show exhibit display study research investigate examine analyze evaluate assess review read watch listen observe view browse search find lookup consult refer check verify confirm validate authenticate certify educate teach train instruct coach mentor guide direct advise counsel inform enlighten illuminate clarify explain describe define interpret translate simplify break down elaborate expand detail specify articulate express communicate convey transmit share spread disseminate distribute propagate broadcast publish release issue present deliver provide supply offer give tips tricks hacks techniques methods approaches strategies tactics procedures processes systems frameworks models patterns practices principles concepts ideas thoughts insights perspectives viewpoints opinions beliefs understandings interpretations explanations descriptions definitions examples illustrations demonstrations samples specimens instances cases scenarios situations contexts circumstances conditions environments settings backgrounds foundations basics fundamentals essentials principles elements components parts aspects features characteristics attributes properties qualities traits farming knowledge agricultural knowledge crop knowledge plant knowledge soil knowledge weather knowledge pest knowledge disease knowledge weed knowledge irrigation knowledge fertilization knowledge cultivation knowledge harvesting knowledge planting knowledge sowing knowledge growing knowledge production knowledge yield knowledge quality knowledge market knowledge price knowledge economics knowledge business knowledge management knowledge planning knowledge organization knowledge best practices good practices proven practices tested practices successful practices effective practices efficient practices optimal practices recommended practices suggested practices advised practices smart practices wise practices intelligent practices strategic practices tactical practices operational practices practical practices applicable practices usable practices workable practices feasible practices viable practices realistic practices achievable practices attainable practices സ്വീകാര്യമായ രീതികൾ വിജ്ഞാനം പഠനം വിദ്യാഭ്യാസം ഗൈഡ് ട്യൂട്ടോറിയൽ എങ്ങനെ സഹായം ലേഖനം പഠന സാമഗ്രികൾ വിജ്ഞാന കേന്ദ്രം പഠന കേന്ദ്രം വിദ്യാഭ്യാസ കേന്ദ്രം പരിശീലന കേന്ദ്രം വിഭവ കേന്ദ്രം വിവര കേന്ദ്രം സഹായ കേന്ദ്രം പിന്തുണ കേന്ദ്രം ഡോക്യുമെന്റേഷൻ ഡോക്സ് മാനുവൽ ഹാൻഡ്ബുക്ക് ഗൈഡ്ബുക്ക് റഫറൻസ് പഠന സാമഗ്രികൾ പഠന സാമഗ്രികൾ വിദ്യാഭ്യാസ സാമഗ്രികൾ പരിശീലന സാമഗ്രികൾ നിർദേശ സാമഗ്രികൾ അധ്യാപന സാമഗ്രികൾ കോഴ്സ് മെറ്റീരിയൽ പാഠ സാമഗ്രികൾ മൊഡ്യൂൾ ഉള്ളടക്കം പഠന ഉള്ളടക്കം വിദ്യാഭ്യാസ ഉള്ളടക്കം നിർദേശ ഉള്ളടക്കം പരിശീലന ഉള്ളടക്കം അധ്യാപന ഉള്ളടക്കം അറിവ് ഉള്ളടക്കം വിവര ഉള്ളടക്കം റഫറൻസ് ഉള്ളടക്കം പഠന ഗൈഡ് പഠന ഗൈഡ് വിദ്യാഭ്യാസ ഗൈഡ് പരിശീലന ഗൈഡ് നിർദേശ ഗൈഡ് അധ്യാപന ഗൈഡ് എങ്ങനെ ഗൈഡ് ഘട്ടം ഘട്ടമായുള്ള ഗൈഡ് തുടക്കക്കാർക്കുള്ള ഗൈഡ് അഡ്വാൻസ്ഡ് ഗൈഡ് വിദഗ്ദ്ധ ഗൈഡ് സമ്പൂർണ്ണ ഗൈഡ് സമഗ്ര ഗൈഡ് വിശദമായ ഗൈഡ് പ്രായോഗിക ഗൈഡ് ഹാൻഡ്സ് ഓൺ ഗൈഡ് വിഷ്വൽ ഗൈഡ് വീഡിയോ ഗൈഡ് ഓഡിയോ ഗൈഡ് ടെക്സ്റ്റ് ഗൈഡ് രേഖാമൂലമുള്ള ഗൈഡ് ചിത്രീകരിച്ച ഗൈഡ് ഡയഗ്രം ഗൈഡ് ഇൻഫോഗ്രാഫിക് ഗൈഡ് ട്യൂട്ടോറിയൽ പാഠം കോഴ്സ് പരിശീലനം വർക്ക്ഷോപ്പ് സെമിനാർ വെബിനാർ ക്ലാസ് സെഷൻ മൊഡ്യൂൾ യൂണിറ്റ് അധ്യായം വിഷയം വിഷയം കാര്യം ഉള്ളടക്കം മെറ്റീരിയൽ റിസോഴ്സ് പഠന പാത വിദ്യാഭ്യാസ പാത പരിശീലന പാത അറിവ് പാത പഠന പാത പാഠ്യപദ്ധതി സിലബസ് പ്രോഗ്രാം സ്കീം പ്ലാൻ റോഡ്മാപ്പ് യാത്ര പാതവഴി റൂട്ട് ട്രാക്ക് ട്രയൽ എങ്ങനെയെന്ന് പഠിക്കുക കണ്ടെത്തുക കണ്ടുപിടിക്കുക പര്യവേക്ഷണം ചെയ്യുക മനസ്സിലാക്കുക ഗ്രഹിക്കുക പിടിച്ചെടുക്കുക മാസ്റ്റർ നേടുക നേടുക നേടുക നേടുക ലഭിക്കുക സ്വീകരിക്കുക ആഗിരണം ചെയ്യുക സ്വാംശീകരിക്കുക ദഹിപ്പിക്കുക ആന്തരികവൽക്കരിക്കുക മനഃപാഠമാക്കുക ഓർക്കുക നിലനിർത്തുക തിരിച്ചുവിളിക്കുക വീണ്ടെടുക്കുക പ്രയോഗിക്കുക പരിശീലനം ഉപയോഗിക്കുക ഉപയോഗിക്കുക നടപ്പിലാക്കുക നടപ്പിലാക്കുക നിർവഹിക്കുക പ്രദർശിപ്പിക്കുക കാണിക്കുക പ്രദർശിപ്പിക്കുക പ്രദർശിപ്പിക്കുക പഠനം ഗവേഷണം അന്വേഷിക്കുക പരിശോധിക്കുക വിശകലനം ചെയ്യുക വിലയിരുത്തുക വിലയിരുത്തുക അവലോകനം ചെയ്യുക വായിക്കുക കാണുക കേൾക്കുക നിരീക്ഷിക്കുക കാണുക ബ്രൗസ് ചെയ്യുക തിരയുക കണ്ടെത്തുക ലുക്കപ്പ് കൂടിയാലോചിക്കുക റഫർ ചെയ്യുക പരിശോധിക്കുക പരിശോധിക്കുക സ്ഥിരീകരിക്കുക സാധൂകരിക്കുക പ്രാമാണീകരിക്കുക സാക്ഷ്യപ്പെടുത്തുക വിദ്യാഭ്യാസം പഠിപ്പിക്കുക പരിശീലിപ്പിക്കുക നിർദേശിക്കുക പരിശീലിപ്പിക്കുക ഉപദേശിക്കുക മാർഗനിർദേശം നൽകുക നേരിട്ട് ഉപദേശിക്കുക ഉപദേശിക്കുക അറിയിക്കുക ജ്ഞാനോദയം പ്രകാശിപ്പിക്കുക വ്യക്തമാക്കുക വിശദീകരിക്കുക വിവരിക്കുക നിർവചിക്കുക വ്യാഖ്യാനിക്കുക വിവർത്തനം ചെയ്യുക ലളിതമാക്കുക വിഘടിപ്പിക്കുക വിശദീകരിക്കുക വിപുലീകരിക്കുക വിശദാംശം വ്യക്തമാക്കുക പ്രകടിപ്പിക്കുക പ്രകടിപ്പിക്കുക ആശയവിനിമയം നടത്തുക കൈമാറുക കൈമാറ്റം ചെയ്യുക പങ്കിടുക വ്യാപിപ്പിക്കുക പ്രചരിപ്പിക്കുക വിതരണം ചെയ്യുക പ്രചരിപ്പിക്കുക പ്രക്ഷേപണം ചെയ്യുക പ്രസിദ്ധീകരിക്കുക റിലീസ് ചെയ്യുക ഇഷ്യൂ ചെയ്യുക അവതരിപ്പിക്കുക വിതരണം ചെയ്യുക നൽകുക വിതരണം ചെയ്യുക വാഗ്ദാനം ചെയ്യുക നൽകുക നുറുങ്ങുകൾ തന്ത്രങ്ങൾ ഹാക്കുകൾ സാങ്കേതികതകൾ രീതികൾ സമീപനങ്ങൾ തന്ത്രങ്ങൾ തന്ത്രങ്ങൾ നടപടിക്രമങ്ങൾ പ്രക്രിയകൾ സിസ്റ്റങ്ങൾ ചട്ടക്കൂടുകൾ മോഡലുകൾ പാറ്റേണുകൾ പരിശീലനങ്ങൾ തത്വങ്ങൾ ആശയങ്ങൾ ആശയങ്ങൾ ചിന്തകൾ ഉൾക്കാഴ്ചകൾ കാഴ്ചപ്പാടുകൾ വീക്ഷണങ്ങൾ അഭിപ്രായങ്ങൾ വിശ്വാസങ്ങൾ ധാരണകൾ വ്യാഖ്യാനങ്ങൾ വിശദീകരണങ്ങൾ വിവരണങ്ങൾ നിർവചനങ്ങൾ ഉദാഹരണങ്ങൾ ചിത്രീകരണങ്ങൾ പ്രകടനങ്ങൾ സാമ്പിളുകൾ മാതൃകകൾ സംഭവങ്ങൾ കേസുകൾ സാഹചര്യങ്ങൾ സാഹചര്യങ്ങൾ സന്ദർഭങ്ങൾ സാഹചര്യങ്ങൾ അവസ്ഥകൾ പരിസ്ഥിതികൾ ക്രമീകരണങ്ങൾ പശ്ചാത്തലങ്ങൾ അടിത്തറകൾ അടിസ്ഥാനകാര്യങ്ങൾ അടിസ്ഥാനകാര്യങ്ങൾ അവശ്യകാര്യങ്ങൾ തത്വങ്ങൾ മൂലകങ്ങൾ ഘടകങ്ങൾ ഭാഗങ്ങൾ വശങ്ങൾ സവിശേഷതകൾ സവിശേഷതകൾ ആട്രിബ്യൂട്ടുകൾ ഗുണങ്ങൾ ഗുണങ്ങൾ സ്വഭാവവിശേഷങ്ങൾ കൃഷി അറിവ് കാർഷിക അറിവ് വിള അറിവ് ചെടി അറിവ് മണ്ണ് അറിവ് കാലാവസ്ഥ അറിവ് കീട അറിവ് രോഗ അറിവ് കള അറിവ് ജലസേചന അറിവ് വളപ്രയോഗ അറിവ് കൃഷി അറിവ് വിളവെടുപ്പ് അറിവ് നടീൽ അറിവ് വിതയ്ക്കൽ അറിവ് വളർച്ച അറിവ് ഉത്പാദന അറിവ് വിളവ് അറിവ് ഗുണമേന്മ അറിവ് മാർക്കറ്റ് അറിവ് വില അറിവ് സാമ്പത്തിക ശാസ്ത്ര അറിവ് ബിസിനസ് അറിവ് മാനേജ്മെന്റ് അറിവ് ആസൂത്രണ അറിവ് ഓർഗനൈസേഷൻ അറിവ് മികച്ച രീതികൾ നല്ല രീതികൾ തെളിയിക്കപ്പെട്ട രീതികൾ പരീക്ഷിച്ച രീതികൾ വിജയകരമായ രീതികൾ ഫലപ്രദമായ രീതികൾ കാര്യക്ഷമമായ രീതികൾ ഒപ്റ്റിമൽ രീതികൾ ശുപാർശ ചെയ്ത രീതികൾ നിർദേശിച്ച രീതികൾ ഉപദേശിച്ച രീതികൾ മികച്ച രീതികൾ ബുദ്ധിപരമായ രീതികൾ ബുദ്ധിപരമായ രീതികൾ തന്ത്രപരമായ രീതികൾ തന്ത്രപരമായ രീതികൾ പ്രവർത്തനപരമായ രീതികൾ പ്രായോഗിക രീതികൾ ബാധകമായ രീതികൾ ഉപയോഗയോഗ്യമായ രീതികൾ പ്രവർത്തിക്കാവുന്ന രീതികൾ സാധ്യമായ രീതികൾ പ്രായോഗികമായ രീതികൾ യാഥാർത്ഥ്യബോധമുള്ള രീതികൾ നേടാനാകുന്ന രീതികൾ കൈവരിക്കാവുന്ന രീതികൾ",
+    action: "navigate",
+  },
+  {
+    id: "buy",
+    title: "Buy Inputs",
+    keywords:
+      "buy purchase shop order seeds fertilizer pesticide tools equipment inputs shopping buy seeds buy fertilizer buy pesticide buy tools agricultural inputs farm supplies വാങ്ങുക ഷോപ്പിംഗ് ഓർഡർ വിത്ത് വളം കീടനാശിനി ഉപകരണം വിത്ത് വാങ്ങുക വളം വാങ്ങുക",
+    action: "navigate",
+  },
+  {
+    id: "expense",
+    title: "Expense Tracker",
+    keywords:
+      "expense money cost budget track finance accounting spending record payment bill expenses how much spent track spending financial records farm expenses agricultural costs ചെലവ് പണം ബഡ്ജറ്റ് കണക്ക് ട്രാക്ക് ചെലവ് രേഖ പേയ്മെന്റ് എത്ര ചെലവായി ചെലവ് ട്രാക്ക് ചെയ്യുക",
+    action: "navigate",
+  },
+  {
+    id: "news",
+    title: "Agriculture News",
+    keywords:
+      "news update headline article agriculture farming latest current events agricultural news farming news what's new latest updates കാർഷിക വാർത്തകൾ അപ്ഡേറ്റ് ഹെഡ്ലൈൻ ലേഖനം പുതിയത് പുതിയ വാർത്തകൾ",
+    action: "navigate",
+  },
+  {
+    id: "schemes",
+    title: "Government Schemes",
+    keywords:
+      "government scheme subsidy yojana benefit grant loan support aid government benefits government programs farmer schemes agricultural schemes സർക്കാർ പദ്ധതി സബ്സിഡി യോജന ആനുകൂല്യം ഗ്രാന്റ് വായ്പ സർക്കാർ ആനുകൂല്യങ്ങൾ",
+    action: "navigate",
+  },
+  {
+    id: "labourers",
+    title: "Labour Hub",
+    keywords:
+      "labour worker hire employment workforce find workers help manpower job hiring workers need workers find labour find help തൊഴിലാളി വർക്കർ വാടകയ്ക്ക് തൊഴിൽ ജോലിക്കാർ തൊഴിലാളികളെ കണ്ടെത്തുക സഹായം വേണം",
+    action: "navigate",
+  },
+  {
+    id: "fairfarm",
+    title: "FairFarm Marketplace",
+    keywords:
+      "fairfarm marketplace sell direct farmer market trade crops produce sell crops sell produce direct selling farmer to consumer marketplace ഫെയർ ഫാം മാർക്കറ്റ്പ്ലേസ് വിൽക്കുക നേരിട്ട് വ്യാപാരം വിള വിൽക്കുക",
+    action: "navigate",
+  },
+  {
+    id: "notifications",
+    title: "Notifications & Updates",
+    keywords:
+      "notification alert update reminder message announcement notifications alerts updates messages അറിയിപ്പ് അലേർട്ട് അപ്ഡേറ്റ് സന്ദേശം പ്രഖ്യാപനം അറിയിപ്പുകൾ",
+    action: "navigate",
+  },
+  {
+    id: "profile",
+    title: "Profile & Settings",
+    keywords:
+      "profile account settings preferences user personal details edit update my profile my account user settings personal information പ്രൊഫൈൽ അക്കൗണ്ട് സെറ്റിംഗുകൾ മുൻഗണന ഉപയോക്താവ് എന്റെ പ്രൊഫൈൽ",
+    action: "navigate",
+  },
+  {
+    id: "weather",
+    title: "Current Weather",
+    keywords:
+      "weather temperature rain forecast climate today now current condition weather today how is the weather current weather today's weather temperature now what's the weather കാലാവസ്ഥ താപനില മഴ പ്രവചനം ഇന്നത്തെ നിലവിലെ ഇന്നത്തെ കാലാവസ്ഥ എങ്ങനെയാണ് കാലാവസ്ഥ",
+    action: "weather",
+    subAction: "current",
+  },
+  {
+    id: "weather",
+    title: "Weather Alerts",
+    keywords:
+      "weather alert warning storm cyclone heavy rain flood drought extreme weather warnings weather alerts severe weather storm warning കാലാവസ്ഥ അലേർട്ട് മുന്നറിയിപ്പ് കൊടുങ്കാറ്റ് ചുഴലിക്കാറ്റ് കനത്ത മഴ വെള്ളപ്പൊക്കം കാലാവസ്ഥ മുന്നറിയിപ്പുകൾ",
+    action: "weather",
+    subAction: "alerts",
+  },
+  {
+    id: "weather",
+    title: "Weather Forecast",
+    keywords:
+      "weather forecast prediction future tomorrow week ahead weather prediction future weather tomorrow's weather next week weather forecast for tomorrow കാലാവസ്ഥ പ്രവചനം നാളെ ആഴ്ച മുന്നോട്ട് നാളത്തെ കാലാവസ്ഥ ഭാവി കാലാവസ്ഥ",
+    action: "weather",
+    subAction: "forecast",
+  },
+  {
+    id: "chatbot",
+    title: "AI Assistant",
+    keywords:
+      "chatbot assistant ai help support ask question talk chat farming assistant ai help virtual assistant chat with ai ask ai talk to assistant need help general help എഐ സഹായി അസിസ്റ്റന്റ് ചാറ്റ് സഹായം ചോദിക്കുക സംസാരിക്കുക എഐയോട് ചോദിക്കുക സഹായം വേണം",
+    action: "chat",
+  },
+];
+
+// Global embedding model instance
+let embeddingModel: any = null;
+let routeEmbeddings: Float32Array[] = [];
+let isInitialized = false;
+
+/**
+ * Initialize the embedding model and pre-compute route embeddings
+ * This should be called on app startup
+ */
+export async function initializeOfflineMatcher(): Promise<void> {
+  if (isInitialized) {
+    console.log("✅ Offline matcher already initialized");
+    return;
+  }
+
+  try {
+    console.log("🔄 Initializing offline matcher with embeddings...");
+
+    // Load the sentence transformer model
+    embeddingModel = await pipeline(
+      "feature-extraction",
+      "Xenova/all-MiniLM-L6-v2"
+    );
+
+    console.log("✅ Embedding model loaded successfully");
+
+    // Pre-compute embeddings for all routes
+    console.log(`🔄 Computing embeddings for ${ROUTES.length} routes...`);
+    routeEmbeddings = [];
+
+    for (const route of ROUTES) {
+      const embedding = await computeEmbedding(route.examples);
+      routeEmbeddings.push(embedding);
+    }
+
+    isInitialized = true;
+    console.log(
+      `✅ Offline matcher initialized with ${routeEmbeddings.length} route embeddings`
+    );
+  } catch (error) {
+    console.error("❌ Failed to initialize offline matcher:", error);
+    isInitialized = false;
+    throw error;
+  }
+}
+
+/**
+ * Compute embedding for a text string
+ */
+async function computeEmbedding(text: string): Promise<Float32Array> {
+  if (!embeddingModel) {
+    throw new Error("Embedding model not initialized");
+  }
+
+  try {
+    const output = await embeddingModel(text, {
+      pooling: "mean",
+      normalize: true,
+    });
+
+    // Convert to Float32Array for efficient computation
+    return new Float32Array(output.data);
+  } catch (error) {
+    console.error("❌ Error computing embedding:", error);
+    throw error;
+  }
+}
+
+/**
+ * Calculate cosine similarity between two embedding vectors
+ */
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) {
+    throw new Error("Vectors must have the same length");
+  }
+
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * Find the best matching route for a user query using semantic similarity
+ */
+export async function findBestRoute(
+  query: string,
+  language?: string
+): Promise<{
+  route: RouteData;
+  similarity: number;
+  confidence: number;
+}> {
+  if (!isInitialized || !embeddingModel) {
+    throw new Error(
+      "Offline matcher not initialized. Call initializeOfflineMatcher() first."
+    );
+  }
+
+  try {
+    // Normalize query
+    const normalizedQuery = query.toLowerCase().trim();
+    console.log(`🔍 Finding best route for: "${normalizedQuery}"`);
+
+    // Compute embedding for the query
+    const queryEmbedding = await computeEmbedding(normalizedQuery);
+
+    // Calculate similarity with all routes
+    let bestMatch = {
+      index: -1,
+      similarity: -1,
+    };
+
+    for (let i = 0; i < routeEmbeddings.length; i++) {
+      const similarity = cosineSimilarity(queryEmbedding, routeEmbeddings[i]);
+
+      if (similarity > bestMatch.similarity) {
+        bestMatch = {
+          index: i,
+          similarity,
+        };
+      }
+    }
+
+    if (bestMatch.index === -1) {
+      // Fallback to chatbot if no match found
+      console.log("⚠️ No semantic match found, falling back to chatbot");
+      return {
+        route: {
+          id: "chatbot",
+          title: "AI Assistant",
+          examples: "",
+          action: "chat",
+        },
+        similarity: 0,
+        confidence: 0.3,
+      };
+    }
+
+    const matchedRoute = ROUTES[bestMatch.index];
+
+    // Convert similarity to confidence (0-1 scale)
+    // Cosine similarity ranges from -1 to 1, but for text it's typically 0 to 1
+    const confidence = Math.max(0, Math.min(1, bestMatch.similarity));
+
+    console.log(
+      `✅ Best match: ${matchedRoute.title} (similarity: ${bestMatch.similarity.toFixed(3)}, confidence: ${confidence.toFixed(2)})`
+    );
+
+    return {
+      route: matchedRoute,
+      similarity: bestMatch.similarity,
+      confidence,
+    };
+  } catch (error) {
+    console.error("❌ Error finding best route:", error);
+
+    // Fallback to chatbot on error
+    return {
+      route: {
+        id: "chatbot",
+        title: "AI Assistant",
+        examples: "",
+        action: "chat",
+      },
+      similarity: 0,
+      confidence: 0.3,
+    };
+  }
+}
+
+/**
+ * Get initialization status
+ */
+export function getMatcherStatus(): {
+  initialized: boolean;
+  routeCount: number;
+  embeddingCount: number;
+} {
+  return {
+    initialized: isInitialized,
+    routeCount: ROUTES.length,
+    embeddingCount: routeEmbeddings.length,
+  };
+}
+
+/**
+ * Cleanup resources (optional, for when the app is closing)
+ */
+export function cleanupOfflineMatcher(): void {
+  embeddingModel = null;
+  routeEmbeddings = [];
+  isInitialized = false;
+  console.log("🧹 Offline matcher resources cleaned up");
+}
